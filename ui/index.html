@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <title>SARA AI Assistant</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="sidebar">
+    <div class="brand">
+      <div class="logo">
+        <div class="head">
+          <div class="ear left"></div>
+          <div class="ear right"></div>
+          <div class="antenna left"><div class="tip"></div></div>
+          <div class="antenna right"><div class="tip"></div></div>
+          <div class="visor">
+            <div class="eye left"><div class="pupil"></div></div>
+            <div class="eye right"><div class="pupil"></div></div>
+          </div>
+        </div>
+        <div class="body">
+          <div class="shoulder left"></div>
+          <div class="shoulder right"></div>
+          <div class="chest-button" id="chest-button"></div>
+        </div>
+      </div>
+      <div class="wordmark">
+        <h1>Sara</h1>
+        <p>AI assistant</p>
+      </div>
+    </div>
+    
+    <nav>
+      <div class="section-title">Workspace</div>
+      <ul>
+        <li id="nav-chat" class="active">Chat</li>
+        <li id="nav-history">History</li>
+        <li>Alerts</li>
+      </ul>
+      <div class="section-title">Tools</div>
+      <ul>
+        <li id="nav-memory">Memory</li>
+        <li>Plugins</li>
+        <li id="settings-menu" class="settings-menu">
+          Settings 
+          <span class="theme-toggle" id="theme-toggle" title="Toggle Light/Dark Mode">☀️</span>
+        </li>
+      </ul>
+    </nav>
+  </div>
+  
+  <div class="main-panel">
+    <header>
+      <div class="thread-name" id="header-title">Current Thread</div>
+      <div class="status-pill"><span class="dot"></span> Online</div>
+      <div class="tts-toggle" id="tts-toggle" title="Toggle Text-to-Speech">🔊</div>
+    </header>
+    
+    <div id="chat-view" class="view-panel active-view">
+      <div class="chat-area" id="chat-area">
+        <!-- Chat messages -->
+      </div>
+      
+      <div class="input-area">
+      <div class="input-wrapper">
+        <div class="mic-container" id="mic-container">
+          <button id="mic-btn" class="icon-btn mic-btn">
+            <div class="ripple r1"></div>
+            <div class="ripple r2"></div>
+            <svg class="mic-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+            <div class="loader-icon"></div>
+          </button>
+          <div class="waveform">
+            <div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div>
+          </div>
+        </div>
+        <input type="text" id="chat-input" placeholder="Message Sara">
+        <button id="send-btn" class="icon-btn send-btn">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
+        </button>
+      </div>
+    </div>
+    </div> <!-- /chat-view -->
+
+    <div id="history-view" class="view-panel" style="display: none;">
+      <div class="memory-container">
+        <div class="memory-header">
+          <h2>Conversation History</h2>
+          <button id="clear-history-btn" class="btn danger-btn">Clear All History</button>
+        </div>
+        <div class="history-list" id="history-list">
+          <!-- Recent history populate here -->
+        </div>
+      </div>
+    </div> <!-- /history-view -->
+
+    <div id="memory-view" class="view-panel" style="display: none;">
+      <div class="memory-container">
+        <div class="memory-header">
+          <h2>Learned Facts</h2>
+          <button id="new-session-btn" class="btn secondary-btn">New Session</button>
+        </div>
+        
+        <div class="facts-list" id="facts-list">
+          <!-- Facts populate here -->
+        </div>
+      </div>
+    </div> <!-- /memory-view -->
+  </div>
+
+  <template id="assistant-msg-template">
+    <div class="message assistant">
+      <div class="avatar logo-static">
+        <!-- Static simplified logo -->
+        <div class="head">
+          <div class="visor"><div class="eye left"></div><div class="eye right"></div></div>
+        </div>
+      </div>
+      <div class="bubble"></div>
+    </div>
+  </template>
+
+  <template id="user-msg-template">
+    <div class="message user">
+      <div class="bubble"></div>
+    </div>
+  </template>
+
+  <div id="memory-toast" class="memory-toast">
+    <div class="toast-content">
+      <div class="toast-title">Memory Consent</div>
+      <div class="toast-body">Should SARA remember this?</div>
+      <div class="toast-facts" id="toast-facts"></div>
+    </div>
+    <div class="toast-actions">
+      <button id="toast-no-btn" class="btn danger-btn">No, discard</button>
+      <button id="toast-yes-btn" class="btn secondary-btn" style="background: var(--accent); color: white; border: none;">Yes, remember</button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 import datetime
 import requests
+import json
 
 from config import (
     API_KEY,
@@ -13,12 +14,13 @@ API_URL = "https://api.groq.com/openai/v1/chat/completions"
 SERPAPI_URL = "https://serpapi.com/search"
 API_TIMEOUT = 30
 
-history = []
-
+import memory
 
 def _rollback_last_user_message():
-    if history and history[-1].get("role") == "user":
-        history.pop()
+    # If the request fails, we might want to delete the user message from DB.
+    # For now, we won't strictly rollback DB messages to keep a true record,
+    # or we can implement memory.delete_last_user_message() if strictly needed.
+    pass
 
 
 def _friendly_http_error(status_code):
@@ -31,22 +33,6 @@ def _friendly_http_error(status_code):
     if status_code >= 500:
         return "The AI service is temporarily unavailable. Please try again later."
     return f"The AI service returned an error (HTTP {status_code}). Please try again."
-
-
-def _is_datetime_query(message):
-    lower = message.lower()
-    datetime_terms = [
-        "today",
-        "today's date",
-        "current date",
-        "what is the date",
-        "what is today's date",
-        "date today",
-        "current time",
-        "time now",
-        "what time is it",
-    ]
-    return any(term in lower for term in datetime_terms)
 
 
 def _should_search(message):
@@ -145,46 +131,65 @@ def _search_serpapi(query):
         )
     except requests.exceptions.RequestException as exc:
         print(f"[SerpAPI] request failed: {exc}")
-        return None
+        return "[System Note: I couldn't reach the search service right now to get the latest info.]"
 
     if not response.ok:
         print(f"[SerpAPI] request returned status {response.status_code}: {response.text[:200]}")
-        return None
+        return "[System Note: The search service is currently returning errors.]"
 
     try:
         data = response.json()
     except ValueError:
         print("[SerpAPI] invalid JSON response")
-        return None
+        return "[System Note: The search service returned invalid data.]"
 
     return _format_serp_results(data)
 
 
 def ask_ai(message):
-    history.append({"role": "user", "content": message})
-
-    if _is_datetime_query(message):
-        today = datetime.datetime.now().strftime("%d %B %Y")
-        response = f"Today's date is {today}."
-        history.append({"role": "assistant", "content": response})
-        return response
+    memory.save_message("user", message)
 
     search_context = None
     if _should_search(message):
         search_context = _search_serpapi(message)
 
-    messages = history[-10:]
+    # Inject facts
+    facts = memory.get_all_facts()
+    facts_str = "{}"
+    if facts:
+        facts_str = json.dumps(facts, indent=2)
+        
+    recent_history = memory.get_recent_history(limit=10)
+    history_str = "None"
+    if recent_history:
+        history_lines = [f"{msg['role'].capitalize()}: {msg['content']}" for msg in recent_history]
+        history_str = "\n".join(history_lines)
+        
+    system_content = f"""You are SARA, a personal AI assistant. Your identity: "I'm SARA, your AI assistant. I help with coding, research, productivity, learning, and everyday tasks. My goal is to provide accurate, practical, and easy-to-understand assistance while respecting your privacy and preferences."
+Core behavior:
+
+Be professional but friendly — natural, not robotic, not overly casual.
+Never invent facts. If unsure or unverifiable, say so plainly and suggest checking a reliable source or searching the web.
+Adapt tone: professional for work/coding, formal for research/academic topics, friendly for casual chat.
+Stay context-aware — use the recent conversation history and known facts provided to understand follow-ups without asking the user to repeat themselves.
+Prioritize solving the problem first, then explain — don't bury the answer under preamble.
+Stay calm, patient, and respectful always — never sarcastic, argumentative, or emotional.
+For technical/educational topics, explain concepts and best practices, not just the raw answer — help the user learn.
+Keep simple answers short and direct; give detailed explanations only when the question needs it.
+If a tool/API error occurs, explain clearly what went wrong and suggest a next step — never fail silently or crash the conversation.
+
+Known facts about the user: {facts_str}
+Recent conversation context: {history_str}"""
+    
     if search_context:
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "Use the search results below to answer the user. "
-                    "If the information is not directly available in the search results, say so and avoid guessing.\n\n"
-                    "Search results:\n" + search_context
-                ),
-            }
-        ] + messages
+        system_content += (
+            "\n\nUse the search results below to answer the user. "
+            "If the information is not directly available in the search results, say so and avoid guessing.\n\n"
+            "Search results:\n" + search_context
+        )
+    
+    # We pass the recent history in the system prompt as requested, so the actual messages payload only needs the system prompt and the latest user message
+    messages = [{"role": "system", "content": system_content}, {"role": "user", "content": message}]
 
     payload = {
         "model": MODEL,
@@ -229,5 +234,6 @@ def ask_ai(message):
         _rollback_last_user_message()
         return "I received an invalid response from the AI service. Please try again."
 
-    history.append({"role": "assistant", "content": reply})
+    memory.save_message("assistant", reply)
+    memory.extract_and_save_facts(message, reply)
     return reply

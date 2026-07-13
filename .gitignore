@@ -13,3 +13,7 @@ build/
 *.log
 .DS_Store
 Thumbs.db
+
+# User specific files
+data/
+settings.json

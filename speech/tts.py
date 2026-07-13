@@ -163,14 +163,18 @@ class _SpeechController:
                 return
 
     def _say(self, engine, text, smart, is_current):
-        parts = self._split_for_speech(text) if smart else [text]
-        for part in parts:
-            if not is_current():
-                break
-            engine.say(part)
-            engine.runAndWait()
-            if smart and is_current():
-                time.sleep(0.2)
+        if not is_current():
+            return
+            
+        if smart:
+            # Enqueue each sentence as a separate utterance for natural pauses
+            parts = self._split_for_speech(text)
+            for part in parts:
+                engine.say(part)
+        else:
+            engine.say(text)
+            
+        engine.runAndWait()
 
     def _split_for_speech(self, text):
         cleaned = re.sub(r"\s+", " ", text).strip()
