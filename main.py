@@ -84,6 +84,7 @@ class Api:
 if __name__ == "__main__":
     print("SARA Assistant Started...")
     api = Api()
+    api.new_session()
     html_path = os.path.join(os.path.dirname(__file__), 'ui', 'index.html')
     webview.create_window(
         'SARA AI',

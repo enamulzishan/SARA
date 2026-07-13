@@ -372,3 +372,39 @@ document.getElementById('toast-no-btn').addEventListener('click', async () => {
     pendingFacts = null;
   }
 });
+
+// Sidebar New Chat Button
+const sidebarNewChatBtn = document.getElementById('sidebar-new-chat-btn');
+
+function updateNewChatBtnState() {
+  const userMessages = chatArea.querySelectorAll('.message.user');
+  if (userMessages.length === 0) {
+    sidebarNewChatBtn.disabled = true;
+    sidebarNewChatBtn.style.opacity = '0.5';
+    sidebarNewChatBtn.style.cursor = 'not-allowed';
+  } else {
+    sidebarNewChatBtn.disabled = false;
+    sidebarNewChatBtn.style.opacity = '1';
+    sidebarNewChatBtn.style.cursor = 'pointer';
+  }
+}
+
+// Observe chatArea changes to update the button state
+const observer = new MutationObserver(updateNewChatBtnState);
+observer.observe(chatArea, { childList: true });
+// initial state
+updateNewChatBtnState();
+
+sidebarNewChatBtn.addEventListener('click', async () => {
+  if (sidebarNewChatBtn.disabled) return;
+  if (window.pywebview && window.pywebview.api) {
+    await window.pywebview.api.new_session();
+    chatArea.innerHTML = '';
+    chatInput.value = '';
+    // Show fresh greeting
+    const typingBubble = showTypingIndicator();
+    await revealText(typingBubble, "Hi, I'm Sara. How can I help you today?");
+    // Make sure we are on the chat view
+    switchView('chat');
+  }
+});
