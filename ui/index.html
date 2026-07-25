@@ -48,7 +48,7 @@
       <ul>
         <li id="nav-memory">Memory</li>
         <li>Plugins</li>
-        <li id="settings-menu" class="settings-menu">
+        <li id="nav-settings" class="settings-menu" style="cursor: pointer;">
           Settings 
           <span class="theme-toggle" id="theme-toggle" title="Toggle Light/Dark Mode">☀️</span>
         </li>
@@ -113,6 +113,21 @@
         </div>
       </div>
     </div> <!-- /memory-view -->
+
+    <div id="settings-view" class="view-panel" style="display: none;">
+      <div class="memory-container">
+        <div class="memory-header">
+          <h2>Settings & Diagnostics</h2>
+          <button id="test-connection-btn" class="btn secondary-btn" style="background: var(--accent); color: white; border: none;">Test Connection</button>
+        </div>
+        
+        <div class="facts-list" id="api-status-list">
+          <div class="fact-row">
+            <span class="fact-value" style="color: var(--text-secondary);">Click "Test Connection" to check your LLM provider API keys configured in .env.</span>
+          </div>
+        </div>
+      </div>
+    </div> <!-- /settings-view -->
   </div>
 
   <template id="assistant-msg-template">

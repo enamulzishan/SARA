@@ -81,6 +81,13 @@ class Api:
     def new_session(self):
         return assistant.new_session()
 
+    def test_api_keys(self):
+        try:
+            from check_api_keys import run_diagnostics
+            return run_diagnostics()
+        except Exception as e:
+            return [{"provider": "System", "status": "FAILED", "detail": str(e), "success": False, "icon": "❌"}]
+
 if __name__ == "__main__":
     print("SARA Assistant Started...")
     api = Api()

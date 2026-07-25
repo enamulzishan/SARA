@@ -52,7 +52,8 @@ async function loadSettings() {
 
 window.addEventListener('pywebviewready', loadSettings);
 
-themeToggle.addEventListener('click', async () => {
+themeToggle.addEventListener('click', async (e) => {
+  e.stopPropagation();
   const currentTheme = document.documentElement.dataset.theme;
   const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
   document.documentElement.dataset.theme = newTheme;
@@ -172,9 +173,11 @@ chatInput.addEventListener('keypress', (e) => {
 const navChat = document.getElementById('nav-chat');
 const navMemory = document.getElementById('nav-memory');
 const navHistory = document.getElementById('nav-history');
+const navSettings = document.getElementById('nav-settings');
 const chatView = document.getElementById('chat-view');
 const memoryView = document.getElementById('memory-view');
 const historyView = document.getElementById('history-view');
+const settingsView = document.getElementById('settings-view');
 const headerTitle = document.getElementById('header-title');
 
 function switchView(viewName) {
@@ -182,34 +185,87 @@ function switchView(viewName) {
     navChat.classList.add('active');
     navMemory.classList.remove('active');
     navHistory.classList.remove('active');
+    if (navSettings) navSettings.classList.remove('active');
     chatView.style.display = 'flex';
     memoryView.style.display = 'none';
     historyView.style.display = 'none';
+    if (settingsView) settingsView.style.display = 'none';
     headerTitle.textContent = 'Current Thread';
   } else if (viewName === 'memory') {
     navMemory.classList.add('active');
     navChat.classList.remove('active');
     navHistory.classList.remove('active');
+    if (navSettings) navSettings.classList.remove('active');
     memoryView.style.display = 'flex';
     chatView.style.display = 'none';
     historyView.style.display = 'none';
+    if (settingsView) settingsView.style.display = 'none';
     headerTitle.textContent = 'Memory';
     loadMemoryData();
   } else if (viewName === 'history') {
     navHistory.classList.add('active');
     navChat.classList.remove('active');
     navMemory.classList.remove('active');
+    if (navSettings) navSettings.classList.remove('active');
     historyView.style.display = 'flex';
     chatView.style.display = 'none';
     memoryView.style.display = 'none';
+    if (settingsView) settingsView.style.display = 'none';
     headerTitle.textContent = 'History';
     loadHistoryData();
+  } else if (viewName === 'settings') {
+    if (navSettings) navSettings.classList.add('active');
+    navChat.classList.remove('active');
+    navMemory.classList.remove('active');
+    navHistory.classList.remove('active');
+    if (settingsView) settingsView.style.display = 'flex';
+    chatView.style.display = 'none';
+    memoryView.style.display = 'none';
+    historyView.style.display = 'none';
+    headerTitle.textContent = 'Settings & Diagnostics';
   }
 }
 
 navChat.addEventListener('click', () => switchView('chat'));
 navMemory.addEventListener('click', () => switchView('memory'));
 navHistory.addEventListener('click', () => switchView('history'));
+if (navSettings) navSettings.addEventListener('click', () => switchView('settings'));
+
+// Test Connection Button in Settings
+const testConnectionBtn = document.getElementById('test-connection-btn');
+const apiStatusList = document.getElementById('api-status-list');
+
+if (testConnectionBtn) {
+  testConnectionBtn.addEventListener('click', async () => {
+    if (!window.pywebview || !window.pywebview.api) return;
+    
+    testConnectionBtn.disabled = true;
+    testConnectionBtn.textContent = 'Testing...';
+    apiStatusList.innerHTML = '<div class="fact-row"><span class="fact-value" style="color: var(--text-secondary);">Testing API connections, please wait...</span></div>';
+    
+    try {
+      const results = await window.pywebview.api.test_api_keys();
+      apiStatusList.innerHTML = '';
+      
+      results.forEach(res => {
+        const row = document.createElement('div');
+        row.className = 'fact-row';
+        row.innerHTML = `
+          <div class="fact-content">
+            <div class="fact-key">${res.icon} ${res.provider}: ${res.status}</div>
+            <div class="fact-value" style="margin-top: 4px; color: ${res.success ? 'var(--text-primary)' : (res.status === 'Not configured' ? 'var(--text-secondary)' : '#e53935')}">${res.detail}</div>
+          </div>
+        `;
+        apiStatusList.appendChild(row);
+      });
+    } catch (e) {
+      apiStatusList.innerHTML = `<div class="fact-row"><span class="fact-value" style="color: #e53935;">Error running diagnostics: ${e}</span></div>`;
+    } finally {
+      testConnectionBtn.disabled = false;
+      testConnectionBtn.textContent = 'Test Connection';
+    }
+  });
+}
 
 // Memory Data Loading
 const factsList = document.getElementById('facts-list');

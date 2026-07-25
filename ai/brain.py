@@ -1,10 +1,19 @@
 import datetime
+import datetime
 import requests
 import json
+import logging
+from abc import ABC, abstractmethod
+from typing import Union, Generator, List, Dict, Any, Optional
 
 from config import (
-    API_KEY,
-    MODEL,
+    LLM_PROVIDER,
+    GROQ_API_KEY,
+    GROQ_MODEL,
+    GEMINI_API_KEY,
+    GEMINI_MODEL,
+    OPENROUTER_API_KEY,
+    OPENROUTER_MODEL,
     SERPAPI_API_KEY,
     SERPAPI_ENGINE,
     SERPAPI_SEARCH_ALWAYS,
@@ -16,10 +25,316 @@ API_TIMEOUT = 30
 
 import memory
 
+logger = logging.getLogger("sara.ai")
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("[%(levelname)s] %(name)s: %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+
+
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+
+class LLMProvider(ABC):
+    def __init__(self, api_key: str = "", model: str = ""):
+        self.api_key = api_key
+        self.model = model
+
+    @abstractmethod
+    def generate(self, messages: List[Dict[str, Any]], stream: bool = False, images: Optional[List[Any]] = None, **kwargs) -> Union[str, Generator]:
+        """Generate a completion from the LLM provider."""
+        pass
+
+
+class GroqProvider(LLMProvider):
+    def __init__(self, api_key: str = "", model: str = ""):
+        super().__init__(api_key=api_key or GROQ_API_KEY, model=model or GROQ_MODEL)
+
+    def generate(self, messages: List[Dict[str, Any]], stream: bool = False, images: Optional[List[Any]] = None, **kwargs) -> Union[str, Generator]:
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": kwargs.get("temperature", 0.2),
+        }
+        if stream:
+            payload["stream"] = True
+
+        try:
+            res = requests.post(
+                API_URL,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=kwargs.get("timeout", API_TIMEOUT),
+                stream=stream,
+            )
+        except requests.exceptions.Timeout as exc:
+            logger.error(f"[GroqProvider] Request timed out: {exc}")
+            raise RuntimeError("The request timed out. Please try again.") from exc
+        except requests.exceptions.ConnectionError as exc:
+            logger.error(f"[GroqProvider] Connection error: {exc}")
+            raise RuntimeError("Could not connect to the AI service. Check your internet connection.") from exc
+        except requests.exceptions.RequestException as exc:
+            logger.error(f"[GroqProvider] Network error: {exc}")
+            raise RuntimeError(f"Network error while contacting the AI service: {exc}") from exc
+
+        if not res.ok:
+            logger.error(f"[GroqProvider] HTTP Error {res.status_code}: {res.text[:200]}")
+            raise RuntimeError(_friendly_http_error(res.status_code))
+
+        if stream:
+            def _stream_gen():
+                try:
+                    for line in res.iter_lines():
+                        if line:
+                            decoded = line.decode("utf-8").strip()
+                            if decoded.startswith("data: "):
+                                data_str = decoded[6:].strip()
+                                if data_str == "[DONE]":
+                                    break
+                                try:
+                                    chunk = json.loads(data_str)
+                                    delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                    if delta:
+                                        yield delta
+                                except Exception as e:
+                                    logger.warning(f"[GroqProvider] Chunk parse error: {e}")
+                                    continue
+                except Exception as exc:
+                    logger.error(f"[GroqProvider] Streaming error: {exc}")
+                    raise RuntimeError(f"Streaming error: {exc}") from exc
+            return _stream_gen()
+        else:
+            try:
+                data = res.json()
+                choices = data.get("choices") or []
+                if not choices:
+                    raise ValueError("missing choices")
+
+                reply = choices[0].get("message", {}).get("content")
+                if not reply or not str(reply).strip():
+                    raise ValueError("empty reply")
+                return reply
+            except (ValueError, TypeError, KeyError, IndexError) as exc:
+                logger.error(f"[GroqProvider] Response parsing error: {exc}")
+                raise RuntimeError("I received an invalid response from the AI service. Please try again.") from exc
+
+
+class GeminiProvider(LLMProvider):
+    def __init__(self, api_key: str = "", model: str = ""):
+        super().__init__(api_key=api_key or GEMINI_API_KEY, model=model or GEMINI_MODEL)
+        self._client_configured = False
+
+    def _ensure_configured(self):
+        if not self._client_configured:
+            try:
+                import google.generativeai as genai
+                genai.configure(api_key=self.api_key)
+                self._client_configured = True
+            except ImportError as exc:
+                logger.error("google-generativeai SDK not installed.")
+                raise RuntimeError("google-generativeai SDK is not installed. Please run 'pip install google-generativeai'.") from exc
+
+    def generate(self, messages: List[Dict[str, Any]], stream: bool = False, images: Optional[List[Any]] = None, **kwargs) -> Union[str, Generator]:
+        self._ensure_configured()
+        import google.generativeai as genai
+        
+        system_instruction = None
+        history = []
+        last_user_message = ""
+        
+        for idx, msg in enumerate(messages):
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role == "system":
+                system_instruction = (system_instruction + "\n\n" + content).strip() if system_instruction else content
+            elif idx == len(messages) - 1 and role == "user":
+                last_user_message = content
+            else:
+                gemini_role = "model" if role in ("assistant", "model") else "user"
+                history.append({"role": gemini_role, "parts": [content]})
+                
+        try:
+            model_kwargs = {"model_name": self.model}
+            if system_instruction:
+                model_kwargs["system_instruction"] = system_instruction
+                
+            model_obj = genai.GenerativeModel(**model_kwargs)
+            
+            contents = []
+            for h in history:
+                contents.append(h)
+            
+            current_parts = [last_user_message]
+            if images:
+                current_parts.extend(images)
+            contents.append({"role": "user", "parts": current_parts})
+            
+            generation_config = genai.types.GenerationConfig(
+                temperature=kwargs.get("temperature", 0.2),
+            )
+            
+            if stream:
+                response = model_obj.generate_content(contents, generation_config=generation_config, stream=True)
+                def _stream_gen():
+                    try:
+                        for chunk in response:
+                            if chunk.text:
+                                yield chunk.text
+                    except Exception as exc:
+                        logger.error(f"[GeminiProvider] Stream error: {exc}")
+                        raise RuntimeError(f"Gemini streaming error: {exc}") from exc
+                return _stream_gen()
+            else:
+                response = model_obj.generate_content(contents, generation_config=generation_config, stream=False)
+                if not response.text:
+                    raise ValueError("Empty reply from Gemini.")
+                return response.text
+        except Exception as exc:
+            logger.error(f"[GeminiProvider] API failure: {exc}")
+            raise RuntimeError(f"Gemini service error: {exc}") from exc
+
+
+class OpenRouterProvider(LLMProvider):
+    def __init__(self, api_key: str = "", model: str = ""):
+        super().__init__(api_key=api_key or OPENROUTER_API_KEY, model=model or OPENROUTER_MODEL)
+
+    def generate(self, messages: List[Dict[str, Any]], stream: bool = False, images: Optional[List[Any]] = None, **kwargs) -> Union[str, Generator]:
+        formatted_messages = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if images and msg is messages[-1] and role == "user":
+                content_list = [{"type": "text", "text": content}]
+                for img in images:
+                    if isinstance(img, str):
+                        content_list.append({"type": "image_url", "image_url": {"url": img}})
+                formatted_messages.append({"role": role, "content": content_list})
+            else:
+                formatted_messages.append({"role": role, "content": content})
+
+        payload = {
+            "model": self.model,
+            "messages": formatted_messages,
+            "temperature": kwargs.get("temperature", 0.2),
+        }
+        if stream:
+            payload["stream"] = True
+
+        try:
+            res = requests.post(
+                OPENROUTER_URL,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://github.com/enamulzishan/SARA",
+                    "X-Title": "SARA AI Assistant",
+                },
+                json=payload,
+                timeout=kwargs.get("timeout", API_TIMEOUT),
+                stream=stream,
+            )
+        except requests.exceptions.Timeout as exc:
+            logger.error(f"[OpenRouterProvider] Request timed out: {exc}")
+            raise RuntimeError("The request timed out. Please try again.") from exc
+        except requests.exceptions.ConnectionError as exc:
+            logger.error(f"[OpenRouterProvider] Connection error: {exc}")
+            raise RuntimeError("Could not connect to OpenRouter service. Check your internet connection.") from exc
+        except requests.exceptions.RequestException as exc:
+            logger.error(f"[OpenRouterProvider] Network error: {exc}")
+            raise RuntimeError(f"Network error while contacting OpenRouter: {exc}") from exc
+
+        if not res.ok:
+            logger.error(f"[OpenRouterProvider] HTTP Error {res.status_code}: {res.text[:200]}")
+            raise RuntimeError(_friendly_http_error(res.status_code))
+
+        if stream:
+            def _stream_gen():
+                try:
+                    for line in res.iter_lines():
+                        if line:
+                            decoded = line.decode("utf-8").strip()
+                            if decoded.startswith("data: "):
+                                data_str = decoded[6:].strip()
+                                if data_str == "[DONE]":
+                                    break
+                                try:
+                                    chunk = json.loads(data_str)
+                                    delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                    if delta:
+                                        yield delta
+                                except Exception as e:
+                                    logger.warning(f"[OpenRouterProvider] Chunk parse error: {e}")
+                                    continue
+                except Exception as exc:
+                    logger.error(f"[OpenRouterProvider] Streaming error: {exc}")
+                    raise RuntimeError(f"Streaming error: {exc}") from exc
+            return _stream_gen()
+        else:
+            try:
+                data = res.json()
+                choices = data.get("choices") or []
+                if not choices:
+                    raise ValueError("missing choices")
+
+                reply = choices[0].get("message", {}).get("content")
+                if not reply or not str(reply).strip():
+                    raise ValueError("empty reply")
+                return reply
+            except (ValueError, TypeError, KeyError, IndexError) as exc:
+                logger.error(f"[OpenRouterProvider] Response parsing error: {exc}")
+                raise RuntimeError("I received an invalid response from OpenRouter. Please try again.") from exc
+
+
+def get_llm_provider(name: Optional[str] = None) -> LLMProvider:
+    provider_name = (name or LLM_PROVIDER).strip().lower()
+    if provider_name == "groq":
+        return GroqProvider()
+    elif provider_name == "gemini":
+        return GeminiProvider()
+    elif provider_name == "openrouter":
+        return OpenRouterProvider()
+    else:
+        logger.warning(f"Unknown LLM provider '{provider_name}', defaulting to Groq.")
+        return GroqProvider()
+
+
+def generate_with_fallback(messages: List[Dict[str, Any]], stream: bool = False, images: Optional[List[Any]] = None, **kwargs) -> Union[str, Generator]:
+    """
+    Generate completion using the primary provider, falling back to other configured
+    providers if the primary provider hits a rate limit or encounters an error.
+    """
+    all_provider_names = ["groq", "gemini", "openrouter"]
+    primary_name = LLM_PROVIDER.strip().lower()
+    if primary_name not in all_provider_names:
+        primary_name = "groq"
+        
+    provider_order = [primary_name] + [p for p in all_provider_names if p != primary_name]
+    
+    last_exc = None
+    for p_name in provider_order:
+        provider = get_llm_provider(p_name)
+        if not provider.api_key:
+            logger.info(f"[Fallback] Skipping provider '{p_name}' because API key is not configured.")
+            continue
+            
+        try:
+            logger.info(f"[Fallback] Attempting generation with provider '{p_name}'...")
+            return provider.generate(messages, stream=stream, images=images, **kwargs)
+        except Exception as exc:
+            logger.warning(f"[Fallback] Provider '{p_name}' failed: {exc}. Trying next configured provider...")
+            last_exc = exc
+            
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("No configured LLM providers with valid API keys were able to generate a response.")
+
+
 def _rollback_last_user_message():
-    # If the request fails, we might want to delete the user message from DB.
-    # For now, we won't strictly rollback DB messages to keep a true record,
-    # or we can implement memory.delete_last_user_message() if strictly needed.
     pass
 
 
@@ -153,7 +468,6 @@ def ask_ai(message):
     if _should_search(message):
         search_context = _search_serpapi(message)
 
-    # Inject facts
     facts = memory.get_all_facts()
     facts_str = "{}"
     if facts:
@@ -188,51 +502,14 @@ Recent conversation context: {history_str}"""
             "Search results:\n" + search_context
         )
     
-    # We pass the recent history in the system prompt as requested, so the actual messages payload only needs the system prompt and the latest user message
     messages = [{"role": "system", "content": system_content}, {"role": "user", "content": message}]
 
-    payload = {
-        "model": MODEL,
-        "messages": messages,
-        "temperature": 0.2,
-    }
-
     try:
-        res = requests.post(
-            API_URL,
-            headers={
-                "Authorization": f"Bearer {API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=API_TIMEOUT,
-        )
-    except requests.exceptions.Timeout:
+        reply = generate_with_fallback(messages, stream=False, temperature=0.2)
+    except Exception as exc:
         _rollback_last_user_message()
-        return "The request timed out. Please try again."
-    except requests.exceptions.ConnectionError:
-        _rollback_last_user_message()
-        return "Could not connect to the AI service. Check your internet connection."
-    except requests.exceptions.RequestException as exc:
-        _rollback_last_user_message()
-        return f"Network error while contacting the AI service: {exc}"
-
-    if not res.ok:
-        _rollback_last_user_message()
-        return _friendly_http_error(res.status_code)
-
-    try:
-        data = res.json()
-        choices = data.get("choices") or []
-        if not choices:
-            raise ValueError("missing choices")
-
-        reply = choices[0].get("message", {}).get("content")
-        if not reply or not str(reply).strip():
-            raise ValueError("empty reply")
-    except (ValueError, TypeError, KeyError, IndexError):
-        _rollback_last_user_message()
-        return "I received an invalid response from the AI service. Please try again."
+        logger.error(f"[ask_ai] Provider generation error: {exc}")
+        return str(exc)
 
     memory.save_message("assistant", reply)
     memory.extract_and_save_facts(message, reply)
